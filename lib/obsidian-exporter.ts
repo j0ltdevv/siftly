@@ -313,6 +313,7 @@ export interface VaultBookmark {
   confidence: number | null
   ai_summary: string | null
   keep_score: number | null
+  semanticTags: string | null
   mediaItems: Array<{ type: string; url: string; localPath: string | null }>
   categories: CategoryJoin[]
 }
@@ -342,6 +343,38 @@ function noteDate(b: VaultBookmark): string {
   return (b.tweetCreatedAt ?? b.importedAt).toISOString().split('T')[0]
 }
 
+/** Normalized semantic tag set of a bookmark (lowercased tokens). */
+function semanticTagSet(b: VaultBookmark): Set<string> {
+  const tags = new Set<string>()
+  for (const c of b.categories) tags.add(c.category.name.toLowerCase())
+  if (b.semanticTags) {
+    try {
+      const parsed: unknown = JSON.parse(b.semanticTags)
+      if (Array.isArray(parsed)) for (const t of parsed) if (typeof t === 'string') tags.add(t.toLowerCase())
+    } catch { /* unparseable — categories only */ }
+  }
+  return tags
+}
+
+/** Top-N related bookmarks by Jaccard similarity of semantic tags (min score 0.12). */
+export function findRelatedBookmarks(b: VaultBookmark, all: VaultBookmark[], max = 3): Array<{ other: VaultBookmark; score: number }> {
+  const mine = semanticTagSet(b)
+  if (mine.size === 0) return []
+  const scored: Array<{ other: VaultBookmark; score: number }> = []
+  for (const other of all) {
+    if (other.id === b.id) continue
+    const theirs = semanticTagSet(other)
+    if (theirs.size === 0) continue
+    let inter = 0
+    for (const t of mine) if (theirs.has(t)) inter++
+    if (inter === 0) continue
+    const score = inter / (mine.size + theirs.size - inter)
+    if (score >= 0.12) scored.push({ other, score })
+  }
+  scored.sort((x, y) => y.score - x.score)
+  return scored.slice(0, max)
+}
+
 /** Verifiable claims persisted by /api/factcheck into enrichmentMeta.factCheck.verifiedClaims. */
 export function extractClaims(enrichmentMeta: string | null): string[] {
   if (!enrichmentMeta) return []
@@ -355,7 +388,7 @@ export function extractClaims(enrichmentMeta: string | null): string[] {
   }
 }
 
-export function buildBookmarkNote(b: VaultBookmark, mediaLines: string[] = []): string {
+export function buildBookmarkNote(b: VaultBookmark, mediaLines: string[] = [], related: Array<{ other: VaultBookmark; score: number }> = []): string {
   const categories = b.categories.map(c => c.category.name)
   const tags = [`twitter/${sanitizeTag(b.source) || 'bookmark'}`]
   if (b.authorHandle) tags.push(`author/${sanitizeTag(b.authorHandle)}`)
@@ -392,9 +425,14 @@ export function buildBookmarkNote(b: VaultBookmark, mediaLines: string[] = []): 
     `- Author: [[authors/${authorFile}|@${b.authorHandle}]]`,
     '- Library: [[_index]]',
     '',
-    `[View on X](${sourceUrl(b)})`,
-    '',
   )
+  if (related.length > 0) {
+    lines.push('🔗 **Liés**', '', ...related.map(r => {
+      const t = noteTitle(r.other).replace(/[[\]|\n]/g, ' ').trim() || r.other.tweetId
+      return `- [[Bookmarks/${sanitizeFilename(r.other.id)}|${t}]]`
+    }), '')
+  }
+  lines.push(`[View on X](${sourceUrl(b)})`, '')
   return lines.join('\n')
 }
 
@@ -505,6 +543,72 @@ export async function resolveVaultPath(): Promise<string | null> {
   return null
 }
 
+function hexToRgbInt(hex: string): number | null {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim())
+  return m ? parseInt(m[1], 16) : null
+}
+
+export function buildCategoryNote(
+  slug: string,
+  name: string,
+  color: string,
+  entries: Array<{ id: string; title: string }>
+): string {
+  const links = entries
+    .map(e => `- [[Bookmarks/${e.id}|${e.title.replace(/[[\]|\n]/g, ' ').trim() || e.id}]]`)
+    .join('\n')
+  return [
+    '---',
+    'type: category',
+    `slug: ${yamlString(slug)}`,
+    `name: ${yamlString(name)}`,
+    `color: ${yamlString(color)}`,
+    'tags:',
+    '  - index/category',
+    `  - category/${sanitizeTag(slug)}`,
+    '---',
+    '',
+    `# ${name}`,
+    '',
+    `${entries.length} bookmark${entries.length === 1 ? '' : 's'}.`,
+    '',
+    '## Bookmarks',
+    '',
+    links,
+    '',
+  ].join('\n')
+}
+
+/**
+ * Écrit la config du graphe Obsidian : groupes de couleurs par catégorie
+ * (les couleurs viennent de Siftly) + hubs catégories/auteurs.
+ */
+async function writeGraphConfig(
+  resolvedVault: string,
+  cats: Array<{ slug: string; color: string }>
+): Promise<void> {
+  const obsidianDir = path.join(resolvedVault, '.obsidian')
+  const graphFile = path.join(obsidianDir, 'graph.json')
+  let config: Record<string, unknown> = {}
+  try {
+    config = JSON.parse(await fs.readFile(graphFile, 'utf-8')) as Record<string, unknown>
+  } catch {
+    // pas de config existante
+  }
+  const colorGroups: Array<{ query: string; color: { rgb: number; a: number } }> = []
+  for (const c of cats) {
+    const rgb = hexToRgbInt(c.color)
+    if (rgb !== null) colorGroups.push({ query: `tag:#category/${c.slug}`, color: { rgb, a: 1 } })
+  }
+  const hubCats = hexToRgbInt('#f59e0b')
+  if (hubCats !== null) colorGroups.push({ query: 'path:"_index/categories"', color: { rgb: hubCats, a: 1 } })
+  const hubAuthors = hexToRgbInt('#3b82f6')
+  if (hubAuthors !== null) colorGroups.push({ query: 'path:"_index/authors"', color: { rgb: hubAuthors, a: 1 } })
+  config.colorGroups = colorGroups
+  await fs.mkdir(obsidianDir, { recursive: true })
+  await fs.writeFile(graphFile, JSON.stringify(config, null, 2), 'utf-8')
+}
+
 export async function exportBookmarksToVault(vaultPath: string): Promise<VaultExportResult> {
   const validation = await validateVaultPath(vaultPath)
   if (!validation.valid) {
@@ -529,12 +633,13 @@ export async function exportBookmarksToVault(vaultPath: string): Promise<VaultEx
 
   const result: VaultExportResult = { count: 0, files: [], errors: [] }
   const byAuthor = new Map<string, { displayName: string; entries: Array<{ id: string; title: string }> }>()
+  const byCategory = new Map<string, { name: string; color: string; entries: Array<{ id: string; title: string }> }>()
 
   for (const b of bookmarks) {
     try {
       const mediaLines = await buildMediaLines(b, mediaDir, result.files)
       const noteFile = `${sanitizeFilename(b.id)}.md`
-      await fs.writeFile(path.join(notesDir, noteFile), buildBookmarkNote(b, mediaLines), 'utf-8')
+      await fs.writeFile(path.join(notesDir, noteFile), buildBookmarkNote(b, mediaLines, findRelatedBookmarks(b, bookmarks)), 'utf-8')
       result.files.push(`Bookmarks/${noteFile}`)
       result.count++
 
@@ -543,6 +648,13 @@ export async function exportBookmarksToVault(vaultPath: string): Promise<VaultEx
         byAuthor.set(handle, { displayName: b.authorName || handle, entries: [] })
       }
       byAuthor.get(handle)!.entries.push({ id: b.id, title: noteTitle(b) })
+      for (const bc of b.categories) {
+        const slug = bc.category.slug
+        if (!byCategory.has(slug)) {
+          byCategory.set(slug, { name: bc.category.name, color: bc.category.color, entries: [] })
+        }
+        byCategory.get(slug)!.entries.push({ id: b.id, title: noteTitle(b) })
+      }
     } catch (err: unknown) {
       result.errors.push({ id: b.id, error: err instanceof Error ? err.message : String(err) })
     }
@@ -556,6 +668,24 @@ export async function exportBookmarksToVault(vaultPath: string): Promise<VaultEx
     const authorFile = `_index/authors/@${sanitizeFilename(handle) || 'unknown'}.md`
     await fs.writeFile(path.join(resolvedVault, authorFile), buildAuthorNote(handle, displayName, entries), 'utf-8')
     result.files.push(authorFile)
+  }
+
+  const categoriesDir = path.join(resolvedVault, '_index', 'categories')
+  await fs.mkdir(categoriesDir, { recursive: true })
+  for (const [slug, { name, color, entries }] of byCategory) {
+    const categoryFile = `_index/categories/${sanitizeFilename(slug)}.md`
+    await fs.writeFile(path.join(resolvedVault, categoryFile), buildCategoryNote(slug, name, color, entries), 'utf-8')
+    result.files.push(categoryFile)
+  }
+
+  // couleurs du graphe Obsidian (silencieux si l'écriture échoue)
+  try {
+    await writeGraphConfig(
+      resolvedVault,
+      [...byCategory.entries()].map(([slug, c]) => ({ slug, color: c.color })),
+    )
+  } catch {
+    // .obsidian non inscriptible — pas bloquant
   }
 
   return result
