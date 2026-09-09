@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { AIClient, resolveAIClient } from '@/lib/ai-client'
-import { getActiveModel, getProvider } from '@/lib/settings'
+import { getActiveModel, getProvider, getVisionModel } from '@/lib/settings'
 import {
   seedDefaultCategories,
   categorizeBatch,
@@ -92,7 +92,7 @@ export async function DELETE(): Promise<NextResponse> {
 }
 
 const PIPELINE_WORKERS = 5
-const CAT_BATCH_SIZE = 25
+const CAT_BATCH_SIZE = 10
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   if (getState().status === 'running' || getState().status === 'stopping') {
@@ -211,6 +211,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             dbCategories.map((c) => [c.slug, c.description?.trim() || c.name]),
           )
           const model = await getActiveModel()
+          const visionModel = await getVisionModel()
 
           // Shared categorization queue (JS single-threaded: splice is atomic vs async)
           const catPending: string[] = []
@@ -280,7 +281,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
                 await analyzeItem(
                   { id: media.id, url: media.url, thumbnailUrl: media.thumbnailUrl, type: media.type },
                   client,
-                  model,
+                  visionModel,
                 )
                 anyVisionRan = true
                 counts.visionTagged++

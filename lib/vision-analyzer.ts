@@ -2,7 +2,7 @@ import prisma from '@/lib/db'
 import { buildImageContext } from '@/lib/image-context'
 import { getCliAvailability, claudePrompt, modelNameToCliAlias } from '@/lib/claude-cli-auth'
 import { getCodexCliAvailability, codexPrompt } from '@/lib/codex-cli'
-import { getActiveModel, getProvider } from '@/lib/settings'
+import { getActiveModel, getProvider, getVisionModel } from '@/lib/settings'
 import { AIClient } from '@/lib/ai-client'
 
 export { getActiveModel } from '@/lib/settings'
@@ -246,7 +246,8 @@ export async function analyzeBatch(
   const analyzable = items.filter((m) => m.type === 'photo' || m.type === 'gif' || m.type === 'video')
   if (analyzable.length === 0) return 0
 
-  const model = await getActiveModel()
+  // Images need a multimodal model — may differ from the main text model
+  const model = await getVisionModel()
 
   const tasks = analyzable.map((item) => async () => {
     if (shouldAbort?.()) return 0

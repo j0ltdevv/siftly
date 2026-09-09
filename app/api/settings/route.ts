@@ -13,6 +13,11 @@ const ALLOWED_ANTHROPIC_MODELS = [
   'claude-haiku-4-5-20251001',
   'claude-sonnet-4-6',
   'claude-opus-4-6',
+  // NVIDIA NIM models reachable through the local nvidia-claude-proxy
+  // (tested live 2026-09-08 — see docs/nim-models.md)
+  'nvidia/nemotron-3-super-120b-a12b',
+  'meta/llama-3.2-11b-vision-instruct',
+  'meta/llama-3.2-90b-vision-instruct',
 ] as const
 
 const ALLOWED_OPENAI_MODELS = [

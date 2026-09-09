@@ -1,6 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { exportToObsidian, validateVaultPath } from '@/lib/obsidian-exporter'
+import { exportToObsidian, validateVaultPath, exportBookmarksToVault, resolveVaultPath } from '@/lib/obsidian-exporter'
 import prisma from '@/lib/db'
+
+/**
+ * GET /api/export?format=obsidian (also served at /api/export/obsidian)
+ * Triggers Twitter-Graph vault generation and returns { count, files[] }.
+ */
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const { searchParams } = new URL(request.url)
+  const format = searchParams.get('format')
+  if (format !== 'obsidian') {
+    return NextResponse.json(
+      { error: 'Missing or unsupported query param: format=obsidian' },
+      { status: 400 }
+    )
+  }
+
+  const vaultPath = await resolveVaultPath()
+  if (!vaultPath) {
+    return NextResponse.json(
+      { error: 'Obsidian vault not found. Configure the path in Settings.' },
+      { status: 400 }
+    )
+  }
+
+  try {
+    const result = await exportBookmarksToVault(vaultPath)
+    return NextResponse.json(result)
+  } catch (err: unknown) {
+    console.error('Obsidian vault export error:', err)
+    return NextResponse.json(
+      { error: `Export failed: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 500 }
+    )
+  }
+}
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   let body: { category?: string; overwrite?: boolean } = {}

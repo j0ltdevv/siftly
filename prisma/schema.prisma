@@ -24,7 +24,11 @@ model Bookmark {
   mediaItems    MediaItem[]
   categories    BookmarkCategory[]
 
-  @@index([authorHandle])
+  verdict       String?
+   confidence    Int?
+   ai_summary    String?
+   keep_score    Int?
+   @@index([authorHandle])
   @@index([tweetCreatedAt])
   @@index([enrichedAt])
   @@index([source])

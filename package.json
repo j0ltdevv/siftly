@@ -25,7 +25,7 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@xyflow/react": "^12.10.1",
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "^13.0.3",
     "class-variance-authority": "^0.7.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.576.0",
@@ -38,7 +38,7 @@
   "devDependencies": {
     "@prisma/client": "^7.4.2",
     "@tailwindcss/postcss": "^4",
-    "@types/better-sqlite3": "^7.6.13",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -49,5 +49,9 @@
     "tsx": "^4.21.0",
     "typescript": "^5",
     "vitest": "^4.1.1"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "better-sqlite3@13.0.3": true
   }
 }

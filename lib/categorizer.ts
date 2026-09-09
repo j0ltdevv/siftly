@@ -209,14 +209,40 @@ ${JSON.stringify(tweetData, null, 1)}`
 }
 
 function parseCategorizationResponse(text: string, validSlugs: Set<string>): CategorizationResult[] {
-  const jsonMatch = text.match(/\[[\s\S]*\]/)
-  if (!jsonMatch) throw new Error('No JSON array found in AI response')
+  // Find the first balanced JSON array — handles prose/reasoning around the JSON
+  // and avoids the greedy-regex trap of matching a truncated array.
+  let candidates: string[] = []
+  const fenced = text.match(/```json\s*([\s\S]*?)```/i)
+  if (fenced) candidates.push(fenced[1].trim())
+  const start = text.indexOf('[')
+  if (start !== -1) {
+    let depth = 0
+    for (let i = start; i < text.length; i++) {
+      if (text[i] === '[') depth++
+      else if (text[i] === ']') {
+        depth--
+        if (depth === 0) {
+          candidates.push(text.slice(start, i + 1))
+          break
+        }
+      }
+    }
+  }
 
-  const parsed: unknown = JSON.parse(jsonMatch[0])
+  let parsed: unknown = null
+  for (const candidate of candidates) {
+    try {
+      parsed = JSON.parse(candidate)
+      break
+    } catch {
+      parsed = null
+    }
+  }
+  if (!parsed) throw new Error('No valid JSON array found in AI response')
   if (!Array.isArray(parsed)) throw new Error('Claude response is not an array')
 
   return (parsed as Record<string, unknown>[]).map((item): CategorizationResult => {
-    const tweetId = String(item.tweetId ?? '')
+    const tweetId = String(item.tweetId ?? item.id ?? '')
     const rawAssignments = Array.isArray(item.assignments) ? item.assignments : []
 
     const assignments: CategoryAssignment[] = (rawAssignments as Record<string, unknown>[])
@@ -281,7 +307,7 @@ export async function categorizeBatch(
   const model = await getActiveModel()
   const response = await client.createMessage({
     model,
-    max_tokens: 2048,
+    max_tokens: 8192,
     messages: [{ role: 'user', content: prompt }],
   })
 

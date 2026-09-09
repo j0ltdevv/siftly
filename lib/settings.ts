@@ -13,6 +13,9 @@ let _openAIModelCacheExpiry = 0
 let _cachedMiniMaxModel: string | null = null
 let _miniMaxModelCacheExpiry = 0
 
+let _cachedVisionModel: string | null = null
+let _visionCacheExpiry = 0
+
 const CACHE_TTL = 5 * 60 * 1000
 
 /**
@@ -70,9 +73,23 @@ export async function getActiveModel(): Promise<string> {
 }
 
 /**
+ * Get the model used for image/vision analysis (cached for 5 minutes).
+ * Falls back to the main model when no dedicated vision model is set.
+ */
+export async function getVisionModel(): Promise<string> {
+  if (_cachedVisionModel && Date.now() < _visionCacheExpiry) return _cachedVisionModel
+  const setting = await prisma.setting.findUnique({ where: { key: 'visionModel' } })
+  _cachedVisionModel = setting?.value ?? (await getAnthropicModel())
+  _visionCacheExpiry = Date.now() + CACHE_TTL
+  return _cachedVisionModel
+}
+
+/**
  * Clear all settings caches (call after settings are changed).
  */
 export function invalidateSettingsCache(): void {
+  _cachedVisionModel = null
+  _visionCacheExpiry = 0
   _cachedModel = null
   _modelCacheExpiry = 0
   _cachedProvider = null
